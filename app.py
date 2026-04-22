@@ -9,10 +9,17 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.secret_key = 'super-secret-key'
 
 
-# Initialize extensions
+# extensions
 db.init_app(app)
 migrate.init_app(app, db)
 bcrypt.init_app(app)
+
+
+def get_current_user():
+    user_id = session.get('user_id')
+    if not user_id:
+        return None
+    return User.query.get(user_id)
 
 
 @app.route('/')
@@ -95,6 +102,125 @@ def me():
         username=user.username
     ), 200
 
+
+
+#EXPENSES#
+@app.route('/expenses', methods=['POST'])
+def create_expense():
+    user = get_current_user()
+    if not user:
+        return jsonify(error="Unauthorized"), 401
+
+    data = request.get_json() or {}
+
+    amount = data.get('amount')
+    category = data.get('category')
+
+    if not amount or not category:
+        return jsonify(error="Amount and category required"), 400
+
+    new_expense = Expense(
+        amount=amount,
+        category=category,
+        description=data.get('description'),
+        date=data.get('date'),
+        user_id=user.id
+    )
+
+    db.session.add(new_expense)
+    db.session.commit()
+
+    return jsonify(message="Expense created"), 201
+
+#GET ALL#
+@app.route('/expenses', methods=['GET'])
+def get_expenses():
+    user = get_current_user()
+    if not user:
+        return jsonify(error="Unauthorized"), 401
+
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 5))
+
+    expenses = Expense.query.filter_by(user_id=user.id).paginate(page=page, per_page=per_page, error_out=False)
+
+    results = []
+    for exp in expenses.items:
+        results.append({
+            "id": exp.id,
+            "amount": exp.amount,
+            "category": exp.category,
+            "description": exp.description,
+            "date": exp.date
+        })
+
+    return jsonify(
+        data=results,
+        total=expenses.total,
+        pages=expenses.pages,
+        current_page=expenses.page
+    ), 200
+
+
+#GET ONE#
+@app.route('/expenses/<int:id>', methods=['GET'])
+def get_expense(id):
+    user = get_current_user()
+    if not user:
+        return jsonify(error="Unauthorized"), 401
+
+    expense = Expense.query.get(id)
+
+    if not expense or expense.user_id != user.id:
+        return jsonify(error="Expense not found"), 404
+
+    return jsonify(
+        id=expense.id,
+        amount=expense.amount,
+        category=expense.category,
+        description=expense.description,
+        date=expense.date
+    ), 200
+
+#UPDATE#
+@app.route('/expenses/<int:id>', methods=['PATCH'])
+def update_expense(id):
+    user = get_current_user()
+    if not user:
+        return jsonify(error="Unauthorized"), 401
+
+    expense = Expense.query.get(id)
+
+    if not expense or expense.user_id != user.id:
+        return jsonify(error="Expense not found"), 404
+
+    data = request.get_json() or {}
+
+    expense.amount = data.get('amount', expense.amount)
+    expense.category = data.get('category', expense.category)
+    expense.description = data.get('description', expense.description)
+    expense.date = data.get('date', expense.date)
+
+    db.session.commit()
+
+    return jsonify(message="Expense updated"), 200
+
+#DELETE#
+@app.route('/expenses/<int:id>', methods=['DELETE'])
+def delete_expense(id):
+    user = get_current_user()
+    if not user:
+        return jsonify(error="Unauthorized"), 401
+
+    expense = Expense.query.get(id)
+
+    if not expense or expense.user_id != user.id:
+        return jsonify(error="Expense not found"), 404
+
+    db.session.delete(expense)
+    db.session.commit()
+
+    return jsonify(message="Expense deleted"), 200
 
 if __name__ == '__main__':
     app.run(debug=True)
